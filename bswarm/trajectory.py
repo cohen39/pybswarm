@@ -187,11 +187,12 @@ class Trajectory4D:
                    delimiter=',', fmt='%15g', header=header)
 
 
-def min_deriv_1d(deriv: int, waypoints: List[List[float]], T: List[float], stop: bool) -> Trajectory1D:
+def min_deriv_1d(deriv: int, waypoints: List[List[float]], T: List[float], stop: bool,  velocities=[]) -> Trajectory1D:
     n = deriv * 2  # number of poly coeff (order + 1)
     S = np.hstack([0, np.cumsum(T)])
     legs = len(T)
     assert len(waypoints) == len(T) + 1
+    assert (len(velocities) == len(T) + 1) or (len(velocities) == 0)
 
     def coef_weights(t: float, m: int, t0: float):
         """
@@ -211,11 +212,13 @@ def min_deriv_1d(deriv: int, waypoints: List[List[float]], T: List[float], stop:
     for leg in range(legs):
         # first waypoint
         if leg == 0:
-            for m in range(n // 2):
+            for m in range(n // 2 + 1):
                 A[eq, n * leg:n * (leg + 1)
                   ] = coef_weights(t=S[leg], m=m, t0=S[leg])
                 if m == 0:
                     b[eq] = waypoints[leg]
+                elif m==1 and len(velocities)>0:
+                    b[eq] = velocities[leg]
                 else:
                     b[eq] = 0
                 eq += 1
@@ -227,6 +230,11 @@ def min_deriv_1d(deriv: int, waypoints: List[List[float]], T: List[float], stop:
                         (leg + 1)] = coef_weights(t=S[leg], m=m, t0=S[leg])
                     b[eq] = waypoints[leg]
                     eq += 1
+                elif m == 1 and len(velocities)>0:
+                    A[eq, n * leg:n *
+                        (leg + 1)] = coef_weights(t=S[leg], m=m, t0=S[leg])
+                    b[eq] = velocities[leg]
+                    eq += 1
                 elif stop:
                     A[eq, n * leg:n *
                         (leg + 1)] = coef_weights(t=S[leg], m=m, t0=S[leg])
@@ -235,11 +243,13 @@ def min_deriv_1d(deriv: int, waypoints: List[List[float]], T: List[float], stop:
 
         # last waypoint only
         if leg == legs - 1:
-            for m in range(n // 2):
+            for m in range(n // 2 - 1):
                 A[eq, n * leg:n *
                     (leg + 1)] = coef_weights(t=S[leg + 1], m=m, t0=S[leg])
                 if m == 0:
                     b[eq] = waypoints[leg + 1]
+                elif m==1 and len(velocities)>0:
+                    b[eq] = velocities[leg]
                 else:
                     b[eq] = 0
                 eq += 1
@@ -254,9 +264,17 @@ def min_deriv_1d(deriv: int, waypoints: List[List[float]], T: List[float], stop:
                 b[eq] = 0
                 eq += 1
 
-    if eq != n * legs:
-        print('warning: equations: {:d}, coefficients: {:d}'.format(
+    # if eq != n * legs:
+    print('Equations: {:d}, coefficients: {:d}'.format(
             eq, n * legs))
+
+    sigma_A = np.linalg.svd(A)[1]
+    sigma_Ainv = np.linalg.svd(np.linalg.pinv(A))[1]
+    print('singular values: ')
+    print(sigma_A)
+
+    print('Euclidian norm based condition number: %e' % float(np.max(sigma_A)*np.max(sigma_Ainv)))
+
     c = np.linalg.pinv(A).dot(b)
     P_list = []
     for leg in range(legs):
